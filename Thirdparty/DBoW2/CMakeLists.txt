@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
 project(DBoW2)
 
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
-endif()
-
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wall  -O3 -march=native ")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall  -O3 -march=native")
 
@@ -28,14 +24,13 @@ set(SRCS_DUTILS
   DUtils/Random.cpp
   DUtils/Timestamp.cpp)
 
+set(3rdparty_dir /home/caoxudong/code/third_party/x86)
 
-find_package(OpenCV 4 QUIET)
-if(NOT OpenCV_FOUND)
-   find_package(OpenCV 3.0 QUIET)
-   if(NOT OpenCV_FOUND)
-      message(FATAL_ERROR "OpenCV > 3.0 not found.")
-   endif()
-endif()
+### opencv
+include_directories(${3rdparty_dir}/opencv/include/opencv4)
+link_directories(${3rdparty_dir}/opencv/lib)
+set(OpenCV_LIBS -lopencv_calib3d -lopencv_features2d -lopencv_imgcodecs -lopencv_imgproc -lopencv_highgui -lopencv_core -lopencv_flann -lopencv_videoio)
+
 
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 
