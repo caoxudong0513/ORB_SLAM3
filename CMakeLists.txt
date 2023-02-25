@@ -140,20 +140,7 @@ ${PROJECT_SOURCE_DIR}/Thirdparty/g2o/lib/libg2o.so
 -lcrypto
 )
 
-# If RealSense SDK is found the library is added and its examples compiled
-if(realsense2_FOUND)
-    include_directories(${PROJECT_NAME}
-    ${realsense_INCLUDE_DIR}
-    )
-    target_link_libraries(${PROJECT_NAME}
-    ${realsense2_LIBRARY}
-    )
-endif()
-
-
 # Build examples
-
-
 #Monocular examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Monocular)
 
@@ -173,16 +160,6 @@ add_executable(mono_tum_vi
         Examples/Monocular/mono_tum_vi.cc)
 target_link_libraries(mono_tum_vi ${PROJECT_NAME})
 
-if(realsense2_FOUND)
-    add_executable(mono_realsense_t265
-            Examples/Monocular/mono_realsense_t265.cc)
-    target_link_libraries(mono_realsense_t265 ${PROJECT_NAME})
-
-    add_executable(mono_realsense_D435i
-            Examples/Monocular/mono_realsense_D435i.cc)
-    target_link_libraries(mono_realsense_D435i ${PROJECT_NAME})
-endif()
-
 #Monocular inertial examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Monocular-Inertial)
 
@@ -193,17 +170,6 @@ target_link_libraries(mono_inertial_euroc ${PROJECT_NAME})
 add_executable(mono_inertial_tum_vi
         Examples/Monocular-Inertial/mono_inertial_tum_vi.cc)
 target_link_libraries(mono_inertial_tum_vi ${PROJECT_NAME})
-
-if(realsense2_FOUND)
-    add_executable(mono_inertial_realsense_t265
-            Examples/Monocular-Inertial/mono_inertial_realsense_t265.cc)
-    target_link_libraries(mono_inertial_realsense_t265 ${PROJECT_NAME})
-
-    add_executable(mono_inertial_realsense_D435i
-            Examples/Monocular-Inertial/mono_inertial_realsense_D435i.cc)
-    target_link_libraries(mono_inertial_realsense_D435i ${PROJECT_NAME})
-endif()
-
 
 #Monocular examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples_old/Monocular)
@@ -224,16 +190,6 @@ add_executable(mono_tum_vi_old
         Examples_old/Monocular/mono_tum_vi.cc)
 target_link_libraries(mono_tum_vi_old ${PROJECT_NAME})
 
-if(realsense2_FOUND)
-    add_executable(mono_realsense_t265_old
-            Examples_old/Monocular/mono_realsense_t265.cc)
-    target_link_libraries(mono_realsense_t265_old ${PROJECT_NAME})
-
-    add_executable(mono_realsense_D435i_old
-            Examples_old/Monocular/mono_realsense_D435i.cc)
-    target_link_libraries(mono_realsense_D435i_old ${PROJECT_NAME})
-endif()
-
 #Monocular inertial examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples_old/Monocular-Inertial)
 
@@ -245,14 +201,7 @@ add_executable(mono_inertial_tum_vi_old
         Examples_old/Monocular-Inertial/mono_inertial_tum_vi.cc)
 target_link_libraries(mono_inertial_tum_vi_old ${PROJECT_NAME})
 
-if(realsense2_FOUND)
-    add_executable(mono_inertial_realsense_t265_old
-            Examples_old/Monocular-Inertial/mono_inertial_realsense_t265.cc)
-    target_link_libraries(mono_inertial_realsense_t265_old ${PROJECT_NAME})
-
-    add_executable(mono_inertial_realsense_D435i_old
-            Examples_old/Monocular-Inertial/mono_inertial_realsense_D435i.cc)
-    target_link_libraries(mono_inertial_realsense_D435i_old ${PROJECT_NAME})
-endif()
-
 #./Monocular-Inertial/mono_inertial_euroc ../Vocabulary/ORBvoc.txt ./Monocular-Inertial/EuRoC.yaml /media/caoxudong/data/data/euroc/MH_01_easy ./Monocular-Inertial/EuRoC_TimeStamps/MH01.txt dataset-MH01_monoi
+#./Monocular/mono_euroc ../Vocabulary/ORBvoc.txt ./Monocular/79.yaml /media/caoxudong/data/hz_parking/hpp/vio/data/datasets/company_EuRoC_79/company_made ./Monocular/EuRoC_TimeStamps/79.txt
+#./Monocular-Inertial/mono_inertial_euroc ../Vocabulary/ORBvoc.txt /media/caoxudong/data/hz_parking/hpp/vio/data/yaml/Monocular-Inertial/79.yaml /media/caoxudong/data/hz_parking/hpp/vio/data/datasets/company_EuRoC_79/company_made /media/caoxudong/data/hz_parking/hpp/vio/data/yaml/EuRoC_TimeStamps/79.txt
+#./Monocular-Inertial/mono_inertial_euroc ../Vocabulary/ORBvoc.txt ./Monocular-Inertial/79.yaml /media/caoxudong/data/hz_parking/hpp/vio/data/datasets/company_EuRoC_79/company_made ./Monocular-Inertial/EuRoC_TimeStamps/79.txt

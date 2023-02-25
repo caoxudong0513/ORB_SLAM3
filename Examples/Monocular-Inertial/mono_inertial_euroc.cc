@@ -86,11 +86,11 @@ int main(int argc, char *argv[])
         string pathImu = pathSeq + "/mav0/imu0/data.csv";
 
         LoadImages(pathCam0, pathTimeStamps, vstrImageFilenames[seq], vTimestampsCam[seq]);
-        cout << "LOADED!" << endl;
+        cout << "LOADED!" << pathCam0 << " " << vstrImageFilenames[0].size()<< " " << vTimestampsCam[0].size()<< endl;
 
         cout << "Loading IMU for sequence " << seq << "...";
         LoadIMU(pathImu, vTimestampsImu[seq], vAcc[seq], vGyro[seq]);
-        cout << "LOADED!" << endl;
+        cout << "LOADED!" << pathImu  << " " <<vTimestampsImu[0].size() << " " << vAcc[0].size()<< endl;
 
         nImages[seq] = vstrImageFilenames[seq].size();
         tot_images += nImages[seq];
@@ -101,6 +101,8 @@ int main(int argc, char *argv[])
             cerr << "ERROR: Failed to load images or IMU for sequence" << seq << endl;
             return 1;
         }
+        cout << " Main loop!" <<std::setprecision(20) <<  vTimestampsCam[seq][0]<< endl;
+        cout << " Main loop!" <<std::setprecision(20) << vTimestampsImu[seq][first_imu[seq]]<< endl;
 
         // Find first imu to be considered, supposing imu measurements start first
 
@@ -177,7 +179,8 @@ int main(int argc, char *argv[])
 
                 while(vTimestampsImu[seq][first_imu[seq]]<=vTimestampsCam[seq][ni])
                 {
-                    vImuMeas.push_back(ORB_SLAM3::IMU::Point(vAcc[seq][first_imu[seq]].x,vAcc[seq][first_imu[seq]].y,vAcc[seq][first_imu[seq]].z,
+
+                    vImuMeas.push_back(ORB_SLAM3::IMU::Point(vAcc[seq][first_imu[seq]].x,vAcc[seq][first_imu[seq]].y,vAcc[seq][first_imu[seq]].z*9.8,
                                                              vGyro[seq][first_imu[seq]].x,vGyro[seq][first_imu[seq]].y,vGyro[seq][first_imu[seq]].z,
                                                              vTimestampsImu[seq][first_imu[seq]]));
                     first_imu[seq]++;
