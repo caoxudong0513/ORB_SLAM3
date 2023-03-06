@@ -82,24 +82,32 @@ Eigen::Matrix3f InverseRightJacobianSO3(const Eigen::Vector3f &v)
 }
 
 IntegratedRotation::IntegratedRotation(const Eigen::Vector3f &angVel, const Bias &imuBias, const float &time) {
+    //单位时间内的旋转 ，xyz构成旋转向量 角速度乘时间
+
     const float x = (angVel(0)-imuBias.bwx)*time;
     const float y = (angVel(1)-imuBias.bwy)*time;
     const float z = (angVel(2)-imuBias.bwz)*time;
 
+    //计算旋转矩阵的模值
     const float d2 = x*x+y*y+z*z;
     const float d = sqrt(d2);
 
     Eigen::Vector3f v;
     v << x, y, z;
     Eigen::Matrix3f W = Sophus::SO3f::hat(v);
+    //若旋转较小，旋转向量到旋转矩阵的变换采用指数一阶近似
     if(d<eps)
     {
+        //forster 经典预积分论文公式（4）
         deltaR = Eigen::Matrix3f::Identity() + W;
+        //小量时，右扰动 Jr = I
         rightJ = Eigen::Matrix3f::Identity();
     }
     else
     {
+        //forster 经典预积分论文公式（3）
         deltaR = Eigen::Matrix3f::Identity() + W*sin(d)/d + W*W*(1.0f-cos(d))/d2;
+        //forster 经典预积分论文公式（8）
         rightJ = Eigen::Matrix3f::Identity() - W*(1.0f-cos(d))/d2 + W*W*(d-sin(d))/(d2*d);
     }
 }
@@ -122,11 +130,13 @@ Preintegrated::Preintegrated(Preintegrated* pImuPre): dT(pImuPre->dT),C(pImuPre-
 
 void Preintegrated::CopyFrom(Preintegrated* pImuPre)
 {
+    std::cout << "Preintegrated: start clone" << std::endl;
     dT = pImuPre->dT;
     C = pImuPre->C;
     Info = pImuPre->Info;
     Nga = pImuPre->Nga;
     NgaWalk = pImuPre->NgaWalk;
+    std::cout << "Preintegrated: first clone" << std::endl;
     b.CopyFrom(pImuPre->b);
     dR = pImuPre->dR;
     dV = pImuPre->dV;
@@ -138,9 +148,12 @@ void Preintegrated::CopyFrom(Preintegrated* pImuPre)
     JPa = pImuPre->JPa;
     avgA = pImuPre->avgA;
     avgW = pImuPre->avgW;
+    std::cout << "Preintegrated: second clone" << std::endl;
     bu.CopyFrom(pImuPre->bu);
     db = pImuPre->db;
+    std::cout << "Preintegrated: third clone" << std::endl;
     mvMeasurements = pImuPre->mvMeasurements;
+    std::cout << "Preintegrated: end clone" << std::endl;
 }
 
 
@@ -174,8 +187,15 @@ void Preintegrated::Reintegrate()
         IntegrateNewMeasurement(aux[i].a,aux[i].w,aux[i].t);
 }
 
+//IMU预积分
+/*********************************
+ * acceleration:加速度
+ * angVel：角速度
+ * dt：两个IMU数据之间的时间差
+*********************************/
 void Preintegrated::IntegrateNewMeasurement(const Eigen::Vector3f &acceleration, const Eigen::Vector3f &angVel, const float &dt)
 {
+    //存储IMU加速度、角速度和时间
     mvMeasurements.push_back(integrable(acceleration,angVel,dt));
 
     // Position is updated firstly, as it depends on previously computed velocity and rotation.
@@ -183,19 +203,23 @@ void Preintegrated::IntegrateNewMeasurement(const Eigen::Vector3f &acceleration,
     // Rotation is the last to be updated.
 
     //Matrices to compute covariance
+    //计算协方差 参考Forster论文公式（62）
     Eigen::Matrix<float,9,9> A;
     A.setIdentity();
     Eigen::Matrix<float,9,6> B;
     B.setZero();
 
+    // 考虑偏置后的加速度、角速度
     Eigen::Vector3f acc, accW;
     acc << acceleration(0)-b.bax, acceleration(1)-b.bay, acceleration(2)-b.baz;
     accW << angVel(0)-b.bwx, angVel(1)-b.bwy, angVel(2)-b.bwz;
 
+    //计算平均加速度、角速度
     avgA = (dT*avgA + dR*acc*dt)/(dT+dt);
     avgW = (dT*avgW + accW*dt)/(dT+dt);
 
     // Update delta position dP and velocity dV (rely on no-updated delta rotation)
+    //更新dp和dv（利用还未更新的dR先更新dV和dP）
     dP = dP + dV*dt + 0.5f*dR*acc*dt*dt;
     dV = dV + dR*acc*dt;
 
@@ -217,6 +241,7 @@ void Preintegrated::IntegrateNewMeasurement(const Eigen::Vector3f &acceleration,
 
     // Update delta rotation
     IntegratedRotation dRi(angVel,b,dt);
+    // 强行归一化使其符合旋转矩阵的格式
     dR = NormalizeRotation(dR*dRi.deltaR);
 
     // Compute rotation parts of matrices A and B
@@ -224,13 +249,16 @@ void Preintegrated::IntegrateNewMeasurement(const Eigen::Vector3f &acceleration,
     B.block<3,3>(0,0) = dRi.rightJ*dt;
 
     // Update covariance
+    //更新协方差，frost经典预积分论文的第63个公式
     C.block<9,9>(0,0) = A * C.block<9,9>(0,0) * A.transpose() + B*Nga*B.transpose();
+    // 这一部分最开始是0矩阵，随着积分次数增加，每次都加上随机游走，偏置的信息矩阵
     C.block<6,6>(9,9) += NgaWalk;
 
     // Update rotation jacobian wrt bias correction
     JRg = dRi.deltaR.transpose()*JRg - dRi.rightJ*dt;
 
     // Total integrated time
+    //更新总时间
     dT += dt;
 }
 

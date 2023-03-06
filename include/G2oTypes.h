@@ -392,6 +392,7 @@ class EdgeMonoOnlyPose : public g2o::BaseUnaryEdge<2,Eigen::Vector2d,VertexPose>
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
+    //构造此边：输入3D地图点坐标
     EdgeMonoOnlyPose(const Eigen::Vector3f &Xw_, int cam_idx_=0):Xw(Xw_.cast<double>()),
         cam_idx(cam_idx_){}
 

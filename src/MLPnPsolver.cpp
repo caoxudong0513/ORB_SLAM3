@@ -52,8 +52,14 @@
 
 
 namespace ORB_SLAM3 {
+
+    /**********************位姿求解器构造函数**************
+     * F：当前图像帧
+     * vpMapPointMatches：匹配成功的地图点
+     * ************************************************/
     MLPnPsolver::MLPnPsolver(const Frame &F, const vector<MapPoint *> &vpMapPointMatches):
             mnInliersi(0), mnIterations(0), mnBestInliers(0), N(0), mpCamera(F.mpCamera){
+        //当前图像帧匹配成功的地图点
         mvpMapPointMatches = vpMapPointMatches;
         mvBearingVecs.reserve(F.mvpMapPoints.size());
         mvP2D.reserve(F.mvpMapPoints.size());
@@ -63,24 +69,33 @@ namespace ORB_SLAM3 {
         mvAllIndices.reserve(F.mvpMapPoints.size());
 
         int idx = 0;
+        //遍历地图点
         for(size_t i = 0, iend = mvpMapPointMatches.size(); i < iend; i++){
             MapPoint* pMP = vpMapPointMatches[i];
 
             if(pMP){
                 if(!pMP -> isBad()){
                     if(i >= F.mvKeysUn.size()) continue;
+
+                    //地图点对应的特征点
                     const cv::KeyPoint &kp = F.mvKeysUn[i];
 
                     mvP2D.push_back(kp.pt);
                     mvSigma2.push_back(F.mvLevelSigma2[kp.octave]);
 
                     //Bearing vector should be normalized
+                    //方向向量归一化
+                    //特征点反向投影 2D->3D
+                    //[(x-cx)/fx, (y-xy)/fy, 1]
                     cv::Point3f cv_br = mpCamera->unproject(kp.pt);
                     cv_br /= cv_br.z;
+
+                    //Eigen::Vector3d = bearingVector_t
                     bearingVector_t br(cv_br.x,cv_br.y,cv_br.z);
                     mvBearingVecs.push_back(br);
 
                     //3D coordinates
+                    //地图点的世界坐标
                     Eigen::Matrix<float,3,1> posEig = pMP -> GetWorldPos();
                     point_t pos(posEig(0),posEig(1),posEig(2));
                     mvP3Dw.push_back(pos);
@@ -96,6 +111,11 @@ namespace ORB_SLAM3 {
         SetRansacParameters();
     }
 
+    //nIterations：迭代次数
+    // bNoMORE:等待输出
+    //vbInliers：内点标志
+    //nInliers：内点数目
+    //先设置不需要更多迭代
     //RANSAC methods
     bool MLPnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers, Eigen::Matrix4f &Tout){
         Tout.setIdentity();
@@ -103,6 +123,8 @@ namespace ORB_SLAM3 {
 	    vbInliers.clear();
 	    nInliers=0;
 
+        //N表示匹配的地图点数目
+        //若匹配的特征点数目比最少内点数目还少，则需要更多迭代，位姿求解失败
 	    if(N<mRansacMinInliers)
 	    {
 	        bNoMore = true;
@@ -112,19 +134,23 @@ namespace ORB_SLAM3 {
 	    vector<size_t> vAvailableIndices;
 
 	    int nCurrentIterations = 0;
+        //若迭代次数小于最大迭代次数或当前迭代次数小于迭代次数
 	    while(mnIterations<mRansacMaxIts || nCurrentIterations<nIterations)
 	    {
+            //当前迭代次数+1
 	        nCurrentIterations++;
 	        mnIterations++;
 
 	        vAvailableIndices = mvAllIndices;
 
             //Bearing vectors and 3D points used for this ransac iteration
+            //3D点
             bearingVectors_t bearingVecs(mRansacMinSet);
             points_t p3DS(mRansacMinSet);
             vector<int> indexes(mRansacMinSet);
 
 	        // Get min set of points
+            //每次随机取6个点
 	        for(short i = 0; i < mRansacMinSet; ++i)
 	        {
 	            int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1);
@@ -140,12 +166,19 @@ namespace ORB_SLAM3 {
 	        }
 
             //By the moment, we are using MLPnP without covariance info
+            //这个协方差矩阵表示的是观测的不确定度
             cov3_mats_t covs(1);
 
             //Result
+            //Eigen::Matrix<double,3,4>  = transformation_t
             transformation_t result;
 
 	        // Compute camera pose
+            //bearingVecs : 特征点的3D坐标
+            //P3Ds:地图点的世界坐标
+            //covs:协方差矩阵
+            //indexes：随机选取的点的ID
+            //result：等待输出
             computePose(bearingVecs,p3DS,covs,indexes,result);
 
             //Save result
@@ -222,6 +255,15 @@ namespace ORB_SLAM3 {
 	    return false;
 	}
 
+
+    /**********************参数设置************
+     * probability:迭代过程中随机选取的点均为内点的概率
+     * minInliers：最小内点数目
+     * maxIterations：最大迭代次数
+     * minSet：每次随机选取的特征点数量
+     * epsilon：内点占整个数据集的比例
+     * th2：判断RANSAC的误差阈值
+    ******************************************/
 	void MLPnPsolver::SetRansacParameters(double probability, int minInliers, int maxIterations, int minSet, float epsilon, float th2){
 		mRansacProb = probability;
 	    mRansacMinInliers = minInliers;
@@ -229,6 +271,7 @@ namespace ORB_SLAM3 {
 	    mRansacEpsilon = epsilon;
 	    mRansacMinSet = minSet;
 
+        //N表示匹配的地图点数目
 	    N = mvP2D.size(); // number of correspondences
 
 	    mvbInliersi.resize(N);
@@ -353,8 +396,14 @@ namespace ORB_SLAM3 {
     }
 
 	//MLPnP methods
+    //f : 特征点的3D坐标 （X，Y，1）
+    //p:地图点的世界坐标
+    //covMats:协方差矩阵
+    //indices：随机选取的点的ID
+    //result：等待输出
     void MLPnPsolver::computePose(const bearingVectors_t &f, const points_t &p, const cov3_mats_t &covMats,
                                   const std::vector<int> &indices, transformation_t &result) {
+        //求解位姿至少需要6对3D-2D点实现，确定是否输入了6对点
         size_t numberCorrespondences = indices.size();
         assert(numberCorrespondences > 5);
 
@@ -380,6 +429,8 @@ namespace ORB_SLAM3 {
 
         Eigen::Matrix3d planarTest = points3 * points3.transpose();
         Eigen::FullPivHouseholderQR<Eigen::Matrix3d> rankTest(planarTest);
+        //int r, c;
+        //double minEigenVal = abs(eigen_solver.eigenvalues().real().minCoeff(&r, &c));
         Eigen::Matrix3d eigenRot;
         eigenRot.setIdentity();
 
@@ -527,6 +578,7 @@ namespace ORB_SLAM3 {
         // now we treat the results differently,
         // depending on the scene (planar or not)
         ////////////////////////////////
+        //transformation_t T_final;
         rotation_t Rout;
         translation_t tout;
         if (planar) // planar case
@@ -537,6 +589,7 @@ namespace ORB_SLAM3 {
             tmp << 0.0, result1(0, 0), result1(1, 0),
                     0.0, result1(2, 0), result1(3, 0),
                     0.0, result1(4, 0), result1(5, 0);
+            //double scale = 1 / sqrt(tmp.col(1).norm() * tmp.col(2).norm());
             // row 3
             tmp.col(0) = tmp.col(1).cross(tmp.col(2));
             tmp.transposeInPlace();
@@ -739,6 +792,7 @@ namespace ORB_SLAM3 {
             // solve
             Eigen::LDLT<Eigen::MatrixXd> chol(A);
             dx = chol.solve(g);
+            //dx = A.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(g);
             // this is to prevent the solution from falling into a wrong minimum
             // if the linear estimate is spurious
             if (dx.array().abs().maxCoeff() > 5.0 || dx.array().abs().minCoeff() > 1.0)
@@ -763,6 +817,7 @@ namespace ORB_SLAM3 {
         rodrigues_t w(x[0], x[1], x[2]);
         translation_t T(x[3], x[4], x[5]);
 
+        //rotation_t R = math::cayley2rot(c);
         rotation_t R = rodrigues2rot(w);
         int ii = 0;
 

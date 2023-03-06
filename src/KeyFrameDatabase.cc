@@ -29,9 +29,12 @@ using namespace std;
 namespace ORB_SLAM3
 {
 
+//关键帧数据库构造函数
+//voc:词袋模型的指针
 KeyFrameDatabase::KeyFrameDatabase (const ORBVocabulary &voc):
     mpVoc(&voc)
 {
+     //初始化为词袋模型的大小
     mvInvertedFile.resize(voc.size());
 }
 

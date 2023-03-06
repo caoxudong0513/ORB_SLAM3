@@ -42,6 +42,18 @@ KeyFrame::KeyFrame():
 
 }
 
+/***************根据图像帧构建关键帧*************************
+ * 输入：F：用于构建关键帧的Frame帧
+ *      pMap:Map类指针
+ *      pKFDB:关键帧数据集
+ * 
+ * 初始化：bImu：初始化为地图的IMU初始化状态，初始化为false
+ *        mnFrameId:作为关键帧的图像的Id
+ *        N:初始化为图像帧的特征点数量
+ *        设置当前关键帧的位姿Tcw为当前图像帧的位姿
+ * mnId：关键帧的Id,从0开始
+ * mnTrackReferenceForFrame：记录当前帧的id，表示此关键帧已经成为了当前帧的局部关键帧了，防止重复添加
+ * ************************************************/
 KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     bImu(pMap->isImuInitialized()), mnFrameId(F.mnId),  mTimeStamp(F.mTimeStamp), mnGridCols(FRAME_GRID_COLS), mnGridRows(FRAME_GRID_ROWS),
     mfGridElementWidthInv(F.mfGridElementWidthInv), mfGridElementHeightInv(F.mfGridElementHeightInv),
@@ -63,6 +75,7 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
 {
     mnId=nNextId++;
 
+    // 根据指定的普通帧, 初始化用于加速匹配的网格对象信息; 其实就把每个网格中有的特征点的索引复制过来
     mGrid.resize(mnGridCols);
     if(F.Nleft != -1)  mGridRight.resize(mnGridCols);
     for(int i=0; i<mnGridCols;i++)
@@ -240,6 +253,7 @@ vector<KeyFrame*> KeyFrame::GetVectorCovisibleKeyFrames()
     return mvpOrderedConnectedKeyFrames;
 }
 
+//与此关键帧存在最佳共视关系的n个关键帧
 vector<KeyFrame*> KeyFrame::GetBestCovisibilityKeyFrames(const int &N)
 {
     unique_lock<mutex> lock(mMutexConnections);
@@ -268,6 +282,7 @@ vector<KeyFrame*> KeyFrame::GetCovisiblesByWeight(const int &w)
     else
     {
         int n = it-mvOrderedWeights.begin();
+        //cout << "n = " << n << endl;
         return vector<KeyFrame*>(mvpOrderedConnectedKeyFrames.begin(), mvpOrderedConnectedKeyFrames.begin()+n);
     }
 }
@@ -376,6 +391,13 @@ MapPoint* KeyFrame::GetMapPoint(const size_t &idx)
     return mvpMapPoints[idx];
 }
 
+/***********更新图连接的边****************
+ * 1. 首先获得该关键帧的所有MapPoint点，统计观测到这些3d点的每个关键帧与其它所有关键帧之间的共视程度
+ *    对每一个找到的关键帧，建立一条边，边的权重是该关键帧与当前关键帧公共3d点的个数。
+ * 2. 并且该权重必须大于一个阈值，如果没有超过该阈值的权重，那么就只保留权重最大的边（与其它关键帧的共视程度比较高）
+ * 3. 对这些连接按照权重从大到小进行排序，以方便将来的处理
+ *    更新完covisibility图之后，如果没有初始化过，则初始化为连接权重最大的边（与其它关键帧共视程度最高的那个关键帧），类似于最大生成树
+ */
 void KeyFrame::UpdateConnections(bool upParent)
 {
     map<KeyFrame*,int> KFcounter;
@@ -572,14 +594,17 @@ void KeyFrame::SetErase()
 
 void KeyFrame::SetBadFlag()
 {
+    // std::cout << "Erasing KF..." << std::endl;
     {
         unique_lock<mutex> lock(mMutexConnections);
         if(mnId==mpMap->GetInitKFid())
         {
+            //std::cout << "KF.BADFLAG-> KF 0!!" << std::endl;
             return;
         }
         else if(mbNotErase)
         {
+            //std::cout << "KF.BADFLAG-> mbNotErase!!" << std::endl;
             mbToBeErased = true;
             return;
         }
@@ -589,14 +614,18 @@ void KeyFrame::SetBadFlag()
     {
         mit->first->EraseConnection(this);
     }
+    //std::cout << "KF.BADFLAG-> Connection erased..." << std::endl;
 
     for(size_t i=0; i<mvpMapPoints.size(); i++)
     {
         if(mvpMapPoints[i])
         {
             mvpMapPoints[i]->EraseObservation(this);
+            // nDeletedPoints++;
         }
     }
+    // cout << "nDeletedPoints: " << nDeletedPoints << endl;
+    //std::cout << "KF.BADFLAG-> Observations deleted..." << std::endl;
 
     {
         unique_lock<mutex> lock(mMutexConnections);
@@ -609,6 +638,7 @@ void KeyFrame::SetBadFlag()
         set<KeyFrame*> sParentCandidates;
         if(mpParent)
             sParentCandidates.insert(mpParent);
+        //std::cout << "KF.BADFLAG-> Initially there are " << sParentCandidates.size() << " candidates" << std::endl;
 
         // Assign at each iteration one children with a parent (the pair with highest covisibility weight)
         // Include that children as new parent candidate for the rest
@@ -646,9 +676,16 @@ void KeyFrame::SetBadFlag()
                     }
                 }
             }
+            //std::cout << "KF.BADFLAG-> Find most similar children" << std::endl;
 
             if(bContinue)
             {
+                if(pC->mnId == pP->mnId)
+                {
+                    /*cout << "ERROR: The parent and son can't be the same KF. ID: " << pC->mnId << endl;
+                    cout << "Current KF: " << mnId << endl;
+                    cout << "Parent of the map: " << endl;*/
+                }
                 pC->ChangeParent(pP);
                 sParentCandidates.insert(pC);
                 mspChildrens.erase(pC);
@@ -656,6 +693,7 @@ void KeyFrame::SetBadFlag()
             else
                 break;
         }
+        //std::cout << "KF.BADFLAG-> Apply change of parent to children" << std::endl;
 
         // If a children has no covisibility links with any parent candidate, assign to the original parent of this KF
         if(!mspChildrens.empty())
@@ -665,6 +703,7 @@ void KeyFrame::SetBadFlag()
                 (*sit)->ChangeParent(mpParent);
             }
         }
+        //std::cout << "KF.BADFLAG-> Apply change to its parent" << std::endl;
 
         if(mpParent){
             mpParent->EraseChild(this);
@@ -771,6 +810,11 @@ bool KeyFrame::UnprojectStereo(int i, Eigen::Vector3f &x3D)
         return false;
 }
 
+
+// 评估当前关键帧场景深度，
+// q=2表示中值. 只是在单目情况下才会使用
+// 其实过程就是对当前关键帧下所有地图点的深度进行从小到大排序,
+// 返回距离头部其中1/q处的深度值作为当前场景的平均深度
 float KeyFrame::ComputeSceneMedianDepth(const int q)
 {
     if(N==0)

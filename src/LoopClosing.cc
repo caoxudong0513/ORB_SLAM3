@@ -98,6 +98,8 @@ void LoopClosing::Run()
         //----------------------------
 
 
+        //判断mlpLoopKeyFrameQueue列表中是否存在待处理的关键帧
+        //关键帧从LocalMapping线程中传入
         if(CheckNewKeyFrames())
         {
             if(mpLastCurrentKF)
@@ -109,6 +111,7 @@ void LoopClosing::Run()
             std::chrono::steady_clock::time_point time_StartPR = std::chrono::steady_clock::now();
 #endif
 
+            // 对当前关键帧和关键帧数据库进行对比检测，判断是否存在回环或地图融合
             bool bFindedRegion = NewDetectCommonRegions();
 
 #ifdef REGISTER_TIMES
@@ -119,6 +122,8 @@ void LoopClosing::Run()
 #endif
             if(bFindedRegion)
             {
+                //mbMergeDetected为true表示检测到了融合，即当前关键帧与其他地图存在关联，
+                // 要进行地图融合
                 if(mbMergeDetected)
                 {
                     if ((mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO || mpTracker->mSensor==System::IMU_RGBD) &&
@@ -219,6 +224,7 @@ void LoopClosing::Run()
 
                 }
 
+                // mbLoopDetected为true表示检测到回环，进行会换矫正
                 if(mbLoopDetected)
                 {
                     bool bGoodLoop = true;
@@ -321,30 +327,47 @@ bool LoopClosing::CheckNewKeyFrames()
     return(!mlpLoopKeyFrameQueue.empty());
 }
 
+
+/**************************回环检测********************************
+ * 处理mlpLoopKeyFrameQueue列表中的关键帧（从LocalMapping线程中存入）
+ * 更改回环检测标志位mbLoopDetected和融合检测标志位mbMergeDetected
+*****************************************************************/
 bool LoopClosing::NewDetectCommonRegions()
 {
     // To deactivate placerecognition. No loopclosing nor merging will be performed
+    // 初始操作
     if(!mbActiveLC)
         return false;
 
     {
         unique_lock<mutex> lock(mMutexLoopQueue);
+
+        // 取出mlpLoopKeyFrameQueue的第一个关键帧作为当前关键帧
         mpCurrentKF = mlpLoopKeyFrameQueue.front();
+
         mlpLoopKeyFrameQueue.pop_front();
         // Avoid that a keyframe can be erased while it is being process by this thread
+        // 将当前关键帧的mbNotErase = true，防止此关键帧在别的线程中被删除
         mpCurrentKF->SetNotErase();
+        // 当前关键帧进行了回环检测
         mpCurrentKF->mbCurrentPlaceRecognition = true;
 
+        // 获得当前关键帧的地图
         mpLastMap = mpCurrentKF->GetMap();
     }
 
     if(mpLastMap->IsInertial() && !mpLastMap->GetIniertialBA2())
+    // IMU模式下如果还没进行第二次初始化则不进行回环检测
+    // 添加当前关键帧至关键帧数据库
     {
         mpKeyFrameDB->add(mpCurrentKF);
         mpCurrentKF->SetErase();
         return false;
     }
 
+
+    // 双目条件下，若当前地图的关键帧数量小于5,则不进行回环检测
+    // 添加当前关键帧至关键帧数据库
     if(mpTracker->mSensor == System::STEREO && mpLastMap->GetAllKeyFrames().size() < 5) //12
     {
         // cout << "LoopClousure: Stereo KF inserted without check: " << mpCurrentKF->mnId << endl;
@@ -353,6 +376,9 @@ bool LoopClosing::NewDetectCommonRegions()
         return false;
     }
 
+
+    // 若当前地图的关键帧数量小于12则不进行回环检测
+    // 添加当前关键帧至关键帧数据库
     if(mpLastMap->GetAllKeyFrames().size() < 12)
     {
         // cout << "LoopClousure: Stereo KF inserted without check, map is small: " << mpCurrentKF->mnId << endl;
@@ -365,12 +391,14 @@ bool LoopClosing::NewDetectCommonRegions()
 
     //Check the last candidates with geometric validation
     // Loop candidates
+    // 回环标志位
     bool bLoopDetectedInKF = false;
     bool bCheckSpatial = false;
 
 #ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartEstSim3_1 = std::chrono::steady_clock::now();
 #endif
+    // mnLoopNumCoincidences表示回环成功的次数，初始化时，mnLoopNumCoincidences被初始为0
     if(mnLoopNumCoincidences > 0)
     {
         bCheckSpatial = true;
@@ -419,8 +447,11 @@ bool LoopClosing::NewDetectCommonRegions()
         }
     }
 
+
     //Merge candidates
+    // 融合标志位
     bool bMergeDetectedInKF = false;
+    // mnMergeNumCoincidences表示融合成功的次数，初始化时，mnMergeNumCoincidences被初始为0
     if(mnMergeNumCoincidences > 0)
     {
         // Find from the last KF candidates
@@ -433,6 +464,7 @@ bool LoopClosing::NewDetectCommonRegions()
         bool bCommonRegion = DetectAndReffineSim3FromLastKF(mpCurrentKF, mpMergeMatchedKF, gScw, numProjMatches, mvpMergeMPs, vpMatchedMPs);
         if(bCommonRegion)
         {
+            //cout << "BoW: Merge reffined Sim3 transformation suscelful" << endl;
             bMergeDetectedInKF = true;
 
             mnMergeNumCoincidences++;
@@ -468,6 +500,8 @@ bool LoopClosing::NewDetectCommonRegions()
         double timeEstSim3 = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndEstSim3_1 - time_StartEstSim3_1).count();
 #endif
 
+    // 如果成功检测到融合或回环，则返回true
+    // 添加当前关键帧至关键帧数据库
     if(mbMergeDetected || mbLoopDetected)
     {
 #ifdef REGISTER_TIMES
@@ -482,6 +516,8 @@ bool LoopClosing::NewDetectCommonRegions()
 
     // Extract candidates from the bag of words
     vector<KeyFrame*> vpMergeBowCand, vpLoopBowCand;
+    //cout << "LC: bMergeDetectedInKF: " << bMergeDetectedInKF << "   bLoopDetectedInKF: " << bLoopDetectedInKF << endl;
+    // 若当前关键帧没有被检测到回环或融合，则寻找当前关键帧的三个回环候选帧和融合候选帧
     if(!bMergeDetectedInKF || !bLoopDetectedInKF)
     {
         // Search in BoW
@@ -502,6 +538,22 @@ bool LoopClosing::NewDetectCommonRegions()
 #endif
     // Check the BoW candidates if the geometric candidate list is empty
     //Loop candidates
+
+//    // 若当前关键帧没有被检测到回环，且回环候选帧不为空
+//    if(!bLoopDetectedInKF && !vpLoopBowCand.empty())
+//    {
+//        //对回环候选帧再进行检测，判断是否发生回环
+//        mbLoopDetected = DetectCommonRegionsFromBoW(vpLoopBowCand, mpLoopMatchedKF, mpLoopLastCurrentKF, mg2oLoopSlw, mnLoopNumCoincidences, mvpLoopMPs, mvpLoopMatchedMPs);
+//    }
+//    // Merge candidates
+
+//    //cout << "LC: Find BoW candidates" << endl;
+
+//    // 若当前关键帧没有被检测到融合，且融合候选帧不为空
+//    // 对应论文VI MAP MERGING AND LOOP CLOSING部分的2-5
+//    if(!bMergeDetectedInKF && !vpMergeBowCand.empty())
+//    {
+        //对融合候选帧再进行检测，判断是否发生融合
     if(!bLoopDetectedInKF && !vpLoopBowCand.empty())
     {
         mbLoopDetected = DetectCommonRegionsFromBoW(vpLoopBowCand, mpLoopMatchedKF, mpLoopLastCurrentKF, mg2oLoopSlw, mnLoopNumCoincidences, mvpLoopMPs, mvpLoopMatchedMPs);
@@ -565,6 +617,7 @@ bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame*
             vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
 
             nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw_estimation, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
+            //cout << "REFFINE-SIM3: Projection with optimize Sim3 from last KF with " << nNumProjMatches << " matches" << endl;
             if(nNumProjMatches >= nProjMatchesRep)
             {
                 gScw = gScw_estimation;
@@ -575,6 +628,17 @@ bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame*
     return false;
 }
 
+
+
+/***************利用选取的候选帧再次判断是否发生回环/融合*****************************
+ * vpBowCand：回环候选帧/融合候选帧
+ * pMatchedKF2：等待输出的匹配成功的候选帧
+ * pLastCurrentKF:
+ * g2oScw:  等待输出的候选关键帧到当前关键帧的位姿变换
+ * nNumCoincidences：成功几何验证的帧数，超过3就认为几何验证成功，不超过继续进行时序验证
+ * vpMPs：等待输出的地图点集合
+ * vpMatchedMPs：匹配成功的地图点
+******************************************************************************/
 bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, KeyFrame* &pMatchedKF2, KeyFrame* &pLastCurrentKF, g2o::Sim3 &g2oScw,
                                              int &nNumCoincidences, std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
 {

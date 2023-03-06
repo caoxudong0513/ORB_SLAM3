@@ -30,8 +30,11 @@ Atlas::Atlas(){
     mpCurrentMap = static_cast<Map*>(NULL);
 }
 
+//Atlas类构造函数
+//initKFid初始化关键帧的ID
 Atlas::Atlas(int initKFid): mnLastInitKFidMap(initKFid), mHasViewer(false)
 {
+    //初始化
     mpCurrentMap = static_cast<Map*>(NULL);
     CreateNewMap();
 }
@@ -55,24 +58,48 @@ Atlas::~Atlas()
     }
 }
 
+
+/***********************************创建新地图************************
+ * 函数中先判断当前地图mpCurrentMap是否存在，若存在，先存储当前地图再新建
+ * 如果当前地图不存在，直接新建地图
+ * *****************************************************************/
 void Atlas::CreateNewMap()
 {
     unique_lock<mutex> lock(mMutexAtlas);
     cout << "Creation of new map with id: " << Map::nNextId << endl;
+
+    //判断是否存在当前地图
     if(mpCurrentMap){
+        //地图存在
+        cout << "Exits current map " << endl;
+
+        //mspMaps表示地图集，判断地图集是否为空，且上一地图的关键帧ID小于当前地图的最大的ID
         if(!mspMaps.empty() && mnLastInitKFidMap < mpCurrentMap->GetMaxKFid())
+        {
+            //mnLastInitKFidMap存储的是当前地图创建时的第1个关键帧ID
+            //此处存储当前地图中最大关键帧的ID+1
             mnLastInitKFidMap = mpCurrentMap->GetMaxKFid()+1; //The init KF is the next of current maximum
 
+        }
+
+        //存储当前地图,设置mIsInUse = false;
         mpCurrentMap->SetStoredMap();
         cout << "Stored map with ID: " << mpCurrentMap->GetId() << endl;
 
         //if(mHasViewer)
         //    mpViewer->AddMapToCreateThumbnail(mpCurrentMap);
     }
+
+    //创建新地图
+
     cout << "Creation of new map with last KF id: " << mnLastInitKFidMap << endl;
 
+
+    //新建地图，声明Map类指针，传入创建当前地图时的第一个关键帧序号ID
     mpCurrentMap = new Map(mnLastInitKFidMap);
+    //修改地图使用标记，即mIsInUse为TRUE
     mpCurrentMap->SetCurrentMap();
+    //将创建的此地图添加进地图集
     mspMaps.insert(mpCurrentMap);
 }
 
@@ -317,6 +344,7 @@ void Atlas::PreSave()
     sort(mvpBackupMaps.begin(), mvpBackupMaps.end(), compFunctor());
 
     std::set<GeometricCamera*> spCams(mvpCameras.begin(), mvpCameras.end());
+    cout << "There are " << spCams.size() << " cameras in the atlas" << endl;
     for(Map* pMi : mvpBackupMaps)
     {
         if(!pMi || pMi->IsBad())
@@ -327,6 +355,7 @@ void Atlas::PreSave()
             SetMapBad(pMi);
             continue;
         }
+        cout << "Pre-save of map " << pMi->GetId() << endl;
         pMi->PreSave(spCams);
     }
     RemoveBadMaps();
@@ -335,6 +364,7 @@ void Atlas::PreSave()
 void Atlas::PostLoad()
 {
     map<unsigned int,GeometricCamera*> mpCams;
+    cout << "Maps stored" << endl;
     for(GeometricCamera* pCam : mvpCameras)
     {
         mpCams[pCam->GetId()] = pCam;
@@ -349,6 +379,8 @@ void Atlas::PostLoad()
         numKF += pMi->GetAllKeyFrames().size();
         numMP += pMi->GetAllMapPoints().size();
     }
+
+    cout << "Number KF:" << numKF << "; number MP:" << numMP << endl;
     mvpBackupMaps.clear();
 }
 

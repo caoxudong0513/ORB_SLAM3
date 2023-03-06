@@ -29,6 +29,7 @@
 using namespace std;
 namespace ORB_SLAM3
 {
+     // (cv::Mat& k, float sigma = 1.0, int iterations = 200)
     TwoViewReconstruction::TwoViewReconstruction(const Eigen::Matrix3f& k, float sigma, int iterations)
     {
         mK = k;
@@ -38,19 +39,35 @@ namespace ORB_SLAM3
         mMaxIterations = iterations;
     }
 
+    /**************************特征点三角化构造地图点*******************
+     * 输入：vKeys1：初始帧特征点
+     *      vKeys2：当前帧特征点
+     *      vMatches12：初始图像帧到当前图像帧的匹配
+     *      R21、t21：初始图像帧到当前图像帧的位姿，即世界坐标系到当前图像坐标系
+     *               的位姿变换，输入为空，等待求解输出
+     *      vP3D：std::vector<cv::Point3f>待输出  进行三角化得到的空间点集合
+     *      vbTriangulated：vector<bool> vbTriangulated，等待输出，表示特征点
+     *                      是否进行了三角化
+    ****************************************************************/
     bool TwoViewReconstruction::Reconstruct(const std::vector<cv::KeyPoint>& vKeys1, const std::vector<cv::KeyPoint>& vKeys2, const vector<int> &vMatches12,
                                              Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated)
     {
         mvKeys1.clear();
         mvKeys2.clear();
 
+    //初始图像帧的特征点
         mvKeys1 = vKeys1;
+    //当前图像帧的特征点
         mvKeys2 = vKeys2;
 
         // Fill structures with current keypoints and matches with reference frame
         // Reference Frame: 1, Current Frame: 2
         mvMatches12.clear();
+    //类型：Match类向量,typedef std::pair<int,int> Match;
+//    mvMatches12.clear();
+    //存储匹配成功的特征点，<参考帧特征点，当前帧特征点>
         mvMatches12.reserve(mvKeys2.size());
+    //bool类向量，存储参考图像帧中的特征点的匹配是否成功
         mvbMatched1.resize(mvKeys1.size());
         for(size_t i=0, iend=vMatches12.size();i<iend; i++)
         {
@@ -63,9 +80,11 @@ namespace ORB_SLAM3
                 mvbMatched1[i]=false;
         }
 
+    //匹配成功的特征点对数
         const int N = mvMatches12.size();
 
         // Indices for minimum set selection
+    // 存储所有匹配成功的特征点对的索引
         vector<size_t> vAllIndices;
         vAllIndices.reserve(N);
         vector<size_t> vAvailableIndices;
@@ -76,28 +95,40 @@ namespace ORB_SLAM3
         }
 
         // Generate sets of 8 points for each RANSAC iteration
+    // 为每次RANSAC迭代生成8个特征点
+    // RANSAC最大迭代次数：200
+    //mvSets：200列向量，每个向量中存储vector<size_t>类型的值，每个vector<size_t>是8个向量，初始化为0
         mvSets = vector< vector<size_t> >(mMaxIterations,vector<size_t>(8,0));
 
+    // 按照一定规律产生随机种子
         DUtils::Random::SeedRandOnce(0);
 
+    // 遍历200次
         for(int it=0; it<mMaxIterations; it++)
         {
+        //每次开始迭代，假定所有的特征点对可用，表示可用特征点对的索引ID
             vAvailableIndices = vAllIndices;
 
+        // 选择最小的样本集，使用8点法
             // Select a minimum set
             for(size_t j=0; j<8; j++)
             {
+            //随机生成一个特征点对的索引ID，范围在0到N-1中
                 int randi = DUtils::Random::RandomInt(0,vAvailableIndices.size()-1);
+            // idx索引被选中
                 int idx = vAvailableIndices[randi];
 
+            // 将本次迭代选中的点对索引添加进nvSets中
                 mvSets[it][j] = idx;
 
+            // 删除这个选中的索引，避免重复选择
                 vAvailableIndices[randi] = vAvailableIndices.back();
                 vAvailableIndices.pop_back();
             }
         }
 
         // Launch threads to compute in parallel a fundamental matrix and a homography
+    // vbMatchesInliersH，vbMatchesInliersF记录当前值是不是有效的
         vector<bool> vbMatchesInliersH, vbMatchesInliersF;
         float SH, SF;
         Eigen::Matrix3f H, F;
@@ -105,6 +136,7 @@ namespace ORB_SLAM3
         thread threadH(&TwoViewReconstruction::FindHomography,this,ref(vbMatchesInliersH), ref(SH), ref(H));
         thread threadF(&TwoViewReconstruction::FindFundamental,this,ref(vbMatchesInliersF), ref(SF), ref(F));
 
+    //基础矩阵               
         // Wait until both threads have finished
         threadH.join();
         threadF.join();
@@ -116,6 +148,7 @@ namespace ORB_SLAM3
         float minParallax = 1.0;
 
         // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
+    //根据得分比例，选取某个模型
         if(RH>0.50) // if(RH>0.40)
         {
             //cout << "Initialization from Homography" << endl;
@@ -128,9 +161,26 @@ namespace ORB_SLAM3
         }
     }
 
+    /*********************单应矩阵计算******************************
+     * vbMatchesInliers：标记是否是外点
+     * score:RANSAC得分
+     * H21：结果
+    **************************************************************/
     void TwoViewReconstruction::FindHomography(vector<bool> &vbMatchesInliers, float &score, Eigen::Matrix3f &H21)
     {
         // Number of putative matches
+    // mvMatches12：存储匹配成功的特征点，<参考帧特征点，当前帧特征点>
+    // N：匹配成功的点对个数
+//        const int N = mvMatches12.size();
+
+    // 归一化坐标，用矩阵的形式表示
+        // Normalize coordinates
+    // |sX  0  -meanx*sX|
+    // |0   sY -meany*sY|
+    // |0   0      1    |
+        //归一化特征点坐标
+//        vector<cv::Point2f> vPn1, vPn2;
+        //归一化特征点的变换矩阵
         const int N = mvMatches12.size();
 
         // Normalize coordinates
@@ -145,13 +195,17 @@ namespace ORB_SLAM3
         vbMatchesInliers = vector<bool>(N,false);
 
         // Iteration variables
+    //某次迭代中参考图像帧的特征点坐标
         vector<cv::Point2f> vPn1i(8);
+    //某次迭代中当前图像帧的特征点坐标
         vector<cv::Point2f> vPn2i(8);
         Eigen::Matrix3f H21i, H12i;
+    // 每次RANSAC记录Inlier得分
         vector<bool> vbCurrentInliers(N,false);
         float currentScore;
 
         // Perform all RANSAC iterations and save the solution with highest score
+    //开始迭代,计算归一化后的H阵，
         for(int it=0; it<mMaxIterations; it++)
         {
             // Select a minimum set
@@ -160,13 +214,19 @@ namespace ORB_SLAM3
                 int idx = mvSets[it][j];
 
                 vPn1i[j] = vPn1[mvMatches12[idx].first];
+            //参考帧的归一化特征点
+//                vPn2i[j] = vPn2[mvMatches12[idx].second];
+            //当前帧的归一化特征点
                 vPn2i[j] = vPn2[mvMatches12[idx].second];
             }
 
+            //利用8个点计算单应矩阵
             Eigen::Matrix3f Hn = ComputeH21(vPn1i,vPn2i);
             H21i = T2inv * Hn * T1;
+            //恢复归一化前的样子
             H12i = H21i.inverse();
 
+        //计算得分，选择最好的模型
             currentScore = CheckHomography(H21i, H12i, vbCurrentInliers, mSigma);
 
             if(currentScore>score)
@@ -343,21 +403,28 @@ namespace ORB_SLAM3
         {
             bool bIn = true;
 
+            //参考图像帧的特征点
             const cv::KeyPoint &kp1 = mvKeys1[mvMatches12[i].first];
+            //当前图像帧的特征
             const cv::KeyPoint &kp2 = mvKeys2[mvMatches12[i].second];
 
+            //参考图像帧的特征点坐标
             const float u1 = kp1.pt.x;
             const float v1 = kp1.pt.y;
+        //当前图像帧的特征点坐标
             const float u2 = kp2.pt.x;
             const float v2 = kp2.pt.y;
 
+        // p2=H21*p1
             // Reprojection error in first image
             // x2in1 = H12*x2
 
+        //当前图像帧的特征点投影至参考图像
             const float w2in1inv = 1.0/(h31inv*u2+h32inv*v2+h33inv);
             const float u2in1 = (h11inv*u2+h12inv*v2+h13inv)*w2in1inv;
             const float v2in1 = (h21inv*u2+h22inv*v2+h23inv)*w2in1inv;
 
+        // 投影距离
             const float squareDist1 = (u1-u2in1)*(u1-u2in1)+(v1-v2in1)*(v1-v2in1);
 
             const float chiSquare1 = squareDist1*invSigmaSquare;
@@ -370,6 +437,7 @@ namespace ORB_SLAM3
             // Reprojection error in second image
             // x1in2 = H21*x1
 
+        //参考图像帧的特征点投影至当前图像
             const float w1in2inv = 1.0/(h31*u1+h32*v1+h33);
             const float u1in2 = (h11*u1+h12*v1+h13)*w1in2inv;
             const float v1in2 = (h21*u1+h22*v1+h23)*w1in2inv;
@@ -475,12 +543,16 @@ namespace ORB_SLAM3
     bool TwoViewReconstruction::ReconstructF(vector<bool> &vbMatchesInliers, Eigen::Matrix3f &F21, Eigen::Matrix3f &K,
                                              Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
     {
+    //统计当前内点个数
         int N=0;
         for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
             if(vbMatchesInliers[i])
                 N++;
 
         // Compute Essential Matrix from Fundamental Matrix
+        // F = K^-T*E*K^-1
+        // E = K^T*F*K
+
         Eigen::Matrix3f E21 = K.transpose() * F21 * K;
 
         Eigen::Matrix3f R1, R2;

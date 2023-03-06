@@ -38,6 +38,24 @@ namespace ORB_SLAM3
 
 Verbose::eLevel Verbose::th = Verbose::VERBOSITY_NORMAL;
 
+//初始化SLAM系统，开启Local Mapping, Loop Closing and Viewer线程
+/******************************************************************
+    strVocFile：词袋文件的位置
+    strSettingsFile：标定文件的位置
+    sensor：传感器类型
+    bUseViewer：是否使用可视化界面（默认使用）
+    initFr：初始图像帧的ID，默认为0
+    strSequence：初始化为空string
+    strLoadingFile：初始化为空string，代码中没使用此参数
+*******************************************************************/
+/*************初始化************************************************
+    mSensor：单目-IMU
+    mpViewer：Viewer类指针初始化
+    mbReset: 是否重置，初始化为false，默认不重置
+    mbResetActiveMap ：是否重新设置ActiveMap，重置活动地图,初始化为false，默认不重置
+    mbActivateLocalizationMode：是否开启局部定位模式，true系统是定位模式，只定位不建图,初始化为false
+    mbDeactivateLocalizationMode：是否释放局部地图,true表示释放局部地图，初始化为false
+*******************************************************************/
 System::System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor,
                const bool bUseViewer, const int initFr, const string &strSequence):
     mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false), mbResetActiveMap(false),
@@ -67,6 +85,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         cout << "RGB-D-Inertial" << endl;
 
     //Check settings file
+    //从yaml文件中读取相机内参、帧速、基线
     cv::FileStorage fsSettings(strSettingsFile.c_str(), cv::FileStorage::READ);
     if(!fsSettings.isOpened())
     {
@@ -182,6 +201,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         mpAtlas->SetInertialSensor();
 
     //Create Drawers. These are used by the Viewer
+    //创建两个显示窗口
     mpFrameDrawer = new FrameDrawer(mpAtlas);
     mpMapDrawer = new MapDrawer(mpAtlas, strSettingsFile, settings_);
 
@@ -396,6 +416,13 @@ Sophus::SE3f System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const
     return Tcw;
 }
 
+//单目跟踪主程序
+/********************************************
+    im：当前图像帧
+    timestamp：当前图像帧的时间戳
+    vImuMeas：当前图像帧和上一图像帧之间的IMU测量量，IMU::Point类型的，包括加速度，角速度，时间戳
+    filename: 空string
+********************************************/
 Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, const vector<IMU::Point>& vImuMeas, string filename)
 {
 
@@ -443,14 +470,18 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
     }
 
     // Check reset
+    //检查系统重置状态 检查是否重置Tracking线程或ActiveMap
     {
         unique_lock<mutex> lock(mMutexReset);
+        //mbReset为是否重置的标志位，初始化为false，默认不重置
         if(mbReset)
         {
+            //mbReset=TRUE,重置Tracking线程
             mpTracker->Reset();
             mbReset = false;
             mbResetActiveMap = false;
         }
+        //mbResetActiveMap是是否重置活动地图的标志位，初始化为false，默认不重置
         else if(mbResetActiveMap)
         {
             cout << "SYSTEM-> Reseting active map in monocular case" << endl;
@@ -459,12 +490,27 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
         }
     }
 
+
+    //单目IMU，加载IMU数据
     if (mSensor == System::IMU_MONOCULAR)
+    {    
+        /*********************************
+            vImuMeas是ORB_SLAM3::IMU::Point类型的vector向量
+            cv::Point3f类型的加速度a
+            cv::Point3f类型的角速度w
+            double 类型的时间戳t
+        ***********************************/
         for(size_t i_imu = 0; i_imu < vImuMeas.size(); i_imu++)
+        {
+            //将IMU值存入Tracking中的mlQueueImuData的list
             mpTracker->GrabImuData(vImuMeas[i_imu]);
+        }    
+    }
 
     Sophus::SE3f Tcw = mpTracker->GrabImageMonocular(imToFeed,timestamp,filename);
 
+
+    //更行状态和特征点、地图点
     unique_lock<mutex> lock2(mMutexState);
     mTrackingState = mpTracker->mState;
     mTrackedMapPoints = mpTracker->mCurrentFrame.mvpMapPoints;
